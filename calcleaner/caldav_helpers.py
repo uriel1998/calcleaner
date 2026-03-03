@@ -1,4 +1,4 @@
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, parse_qs
 from datetime import datetime, date, time, timezone, timedelta
 
 from caldav import DAVClient
@@ -33,6 +33,36 @@ def _event_is_older_than(event, threshold):
     except Exception:
         return False
     return event_dt < threshold
+
+
+def _is_recurrence_instance(event):
+    vevent = getattr(event.vobject_instance, "vevent", None)
+    return bool(vevent and hasattr(vevent, "recurrence_id"))
+
+
+def _event_recurrence_selector(event):
+    event_url = getattr(event, "url", None)
+    if not event_url:
+        return None
+    parsed = urlsplit(str(event_url))
+    query = parse_qs(parsed.query)
+    recurrence_ids = query.get("recurrence-id")
+    if not recurrence_ids:
+        return None
+    return recurrence_ids[0]
+
+
+def _is_recurring_master(event):
+    recurrence_selector = _event_recurrence_selector(event)
+    if recurrence_selector == "master":
+        return True
+
+    vevent = getattr(event.vobject_instance, "vevent", None)
+    if not vevent:
+        return False
+    if hasattr(vevent, "recurrence_id"):
+        return False
+    return any(hasattr(vevent, field) for field in ("rrule", "rdate", "exdate", "exrule"))
 
 
 def fetch_calendars(url, username, password, verify_cert=True):
@@ -107,17 +137,31 @@ def clean_calendar(
             cleaned_count = 0
             for event in old_events:
                 cleaned_count += 1
-                if (
-                    hasattr(event.vobject_instance, "vevent")
-                    and hasattr(event.vobject_instance.vevent, "recurrence_id")
-                    and keep_recurring_events
-                ):
+                is_recurrence_instance = _is_recurrence_instance(event)
+                is_recurring_master = _is_recurring_master(event)
+
+                if (is_recurrence_instance or is_recurring_master) and keep_recurring_events:
                     print(
                         "Skipped a recurring event: '%s'"
                         % event.vobject_instance.vevent.summary.value
                     )
+                elif is_recurring_master:
+                    print(
+                        "Skipped recurring master event to preserve future instances: '%s'"
+                        % event.vobject_instance.vevent.summary.value
+                    )
                 else:
-                    event.delete()
+                    try:
+                        event.delete()
+                    except Exception as error:
+                        error_message = str(error)
+                        if "datetime value is incorrect: master" in error_message:
+                            print(
+                                "Skipped recurring master event due to server-side recurrence parsing: '%s'"
+                                % event.vobject_instance.vevent.summary.value
+                            )
+                        else:
+                            raise
                 yield (cleaned_count, len(old_events))
         else:
             yield (0, 0)
