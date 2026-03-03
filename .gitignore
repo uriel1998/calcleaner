@@ -1,9 +1,40 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / packaging artifacts
 build/
 dist/
-__env__/
-*.egg*
-__pycache__
-.nox
-*~
-*#
-*.mo
+*.egg-info/
+.eggs/
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+bin/
+include/
+lib/
+lib64/
+lib64
+pyvenv.cfg
+
+# Tool caches
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

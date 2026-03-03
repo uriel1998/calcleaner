@@ -1,5 +1,5 @@
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
+from datetime import datetime, date, time, timezone, timedelta
 
 from caldav import DAVClient
 from caldav.elements import ical
@@ -7,6 +7,32 @@ from caldav.elements import ical
 from . import VERSION
 
 USER_AGENT = "CalCleaner/%s" % VERSION
+
+
+def _to_naive_utc(value):
+    if isinstance(value, date) and not isinstance(value, datetime):
+        value = datetime.combine(value, time.min)
+    if value.tzinfo:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _event_is_older_than(event, threshold):
+    vevent = getattr(event.vobject_instance, "vevent", None)
+    if not vevent:
+        return False
+
+    dtend = getattr(vevent, "dtend", None)
+    dtstart = getattr(vevent, "dtstart", None)
+    event_date = (dtend or dtstart)
+    if not event_date:
+        return False
+
+    try:
+        event_dt = _to_naive_utc(event_date.value)
+    except Exception:
+        return False
+    return event_dt < threshold
 
 
 def fetch_calendars(url, username, password, verify_cert=True):
@@ -61,7 +87,20 @@ def clean_calendar(
 
         for calendar in dav_principal.calendars():
             if calendar.canonical_url == url:
-                old_events = calendar.date_search(start=start_date, end=end_date)
+                try:
+                    old_events = calendar.date_search(start=start_date, end=end_date)
+                except Exception as error:
+                    if "Expected a valid recurrence set" not in str(error):
+                        raise
+                    print(
+                        "Calendar '%s': fallback to non-recurring search due to malformed recurrence set."
+                        % url
+                    )
+                    old_events = [
+                        event
+                        for event in calendar.events()
+                        if _event_is_older_than(event, end_date)
+                    ]
                 break
 
         if old_events:
